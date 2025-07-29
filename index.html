@@ -30,6 +30,15 @@
     #powerups { margin-top:10px; }
     #powerups button { margin-right:5px; }
     #cancel-powerup { display: none; }
+
+    /* Challenges UI */
+    #challenges { margin-top:20px; width:100%; max-width:700px; text-align: left; }
+    #challenges details { border: 1px solid #ccc; border-radius: 4px; padding: 5px; }
+    #challenges summary { font-weight: bold; cursor: pointer; }
+    #challenges ul { list-style: none; padding-left: 0; margin: 5px 0; }
+    #challenges li { padding: 4px 6px; border-bottom: 1px solid #eee; }
+    #challenges li.completed { background: #5affb8; color: #999; }
+    #reset-challenges { margin-top: 5px; }
   </style>
 </head>
 <body>
@@ -54,293 +63,493 @@
     <button id="cancel-powerup">Cancel</button>
   </div>
 
+  <!-- Challenges Section -->
+  <div id="challenges">
+    <details id="challenges-dropdown">
+      <summary id="challenges-summary">Challenges (0/5)</summary>
+      <ul id="challenges-list">
+        <li class="challenge" data-id="1">Main Challenge 1 - Win Phase 1</li>
+        <li class="challenge" data-id="2">Main Challenge 2 - Win Phase 2</li>
+        <li class="challenge" data-id="3">Bonus Challenge 1 - Win Phase 1 without using any powerups</li>
+        <li class="challenge" data-id="4">Bonus Challenge 2 - Win Phase 2 without Convert Opponent powerup</li>
+        <li class="challenge" data-id="5">Bonus Challenge 3 - Draw Phase 2 without using any powerup</li>
+      </ul>
+    </details>
+    <button id="reset-challenges">Reset Challenge Progress</button>
+  </div>
+
   <script>
-const SIZE = 7, WIN = 4;
-let board = [], current = 'player', selectedPower = null, phase = 1;
-let lastMoves = { player: null, ai: null, meteor: null };
-let powerUses = { convert: 1 };
+    const SIZE = 7, WIN = 4;
+    let board = [], current = 'player', selectedPower = null, phase = 1;
+    let lastMoves = { player: null, ai: null, meteor: null };
+    let powerUses = { convert: 1 };
+    let powerUsedInPhase = {1: false, 2: false};
+    let convertUsedInPhase2 = false;
+    let challenges = {};
 
-// Child-friendly encouraging banter
-const taunts = [
-  "Great job!", "You're a superstar!", "Keep it up!", "Nice thinking!",
-  "Awesome move!", "You're doing so well!", "Fantastic!", "Way to shine!",
-  "Brilliant!", "You're full of ideas!", "So clever!", "Yay, fun!",
-  "Excellent!", "You're unstoppable!", "Wow, impressive!", "You're amazing!",
-  "High five!", "You're a champ!", "So proud of you!", "Let's go!"
-];
+    const taunts = ["Great job!", "You're a superstar!", "Keep it up!", "Nice thinking!",
+      "Awesome move!", "You're doing so well!", "Fantastic!", "Way to shine!",
+      "Brilliant!", "You're full of ideas!", "So clever!", "Yay, fun!",
+      "Excellent!", "You're unstoppable!", "Wow, impressive!", "You're amazing!",
+      "High five!", "You're a champ!", "So proud of you!", "Let's go!"];
+    const powerLabels = {
+      convert: 'Convert Opponent',
+      remove: 'Remove Square',
+      'reset-row': 'Reset Cells in a Row',
+      'reset-col': 'Reset Cells in a Column'
+    };
 
-const powerLabels = {
-  convert: 'Convert Opponent',
-  remove: 'Remove Square',
-  'reset-row': 'Reset Cells in a Row',
-  'reset-col': 'Reset Cells in a Column'
-};
-
-function updatePhaseDisplay() {
-  document.getElementById('phase-info').textContent = 'Phase: ' + phase;
-}
-
-function updatePowerupButtons() {
-  const container = document.getElementById('powerups');
-  let btn = container.querySelector('button[data-action="convert"]');
-  if (powerUses.convert > 0) {
-    if (!btn) {
-      btn = document.createElement('button');
-      btn.dataset.action = 'convert';
-      container.prepend(btn);
+    // --- Challenge persistence using localStorage ---
+    function loadChallenges() {
+      for (let id = 1; id <= 5; id++) {
+        challenges[id] = localStorage.getItem('challenge' + id) === 'true';
+      }
     }
-    btn.textContent = `${powerLabels.convert} (${powerUses.convert})`;
-  } else if (btn) btn.remove();
-}
-
-function init() {
-  board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
-  current = 'player'; selectedPower = null;
-  lastMoves = { player: null, ai: null, meteor: null };
-  powerUses = { convert: 1 };
-
-  document.getElementById('boss-message').style.display = 'none';
-  document.getElementById('chat-bar').textContent = '';
-  document.getElementById('cancel-powerup').style.display = 'none';
-
-  const boardEl = document.getElementById('board');
-  boardEl.innerHTML = '';
-  boardEl.classList.remove('disabled');
-  for (let r = 0; r < SIZE; r++) {
-    for (let c = 0; c < SIZE; c++) {
-      const cell = document.createElement('div');
-      cell.className = 'cell';
-      cell.dataset.r = r;
-      cell.dataset.c = c;
-      cell.addEventListener('click', onCellClick);
-      cell.addEventListener('mouseover', onCellHover);
-      cell.addEventListener('mouseout', onCellOut);
-      boardEl.appendChild(cell);
+    function saveChallenge(id) {
+      localStorage.setItem('challenge' + id, 'true');
+      challenges[id] = true;
+      updateChallengesUI();
     }
-  }
-  document.getElementById('turn-info').textContent = "Player's turn";
-  updatePhaseDisplay(); updatePowerupButtons(); render(); renderHighlights();
-}
+    function resetChallenges() {
+      for (let id = 1; id <= 5; id++) {
+        localStorage.removeItem('challenge' + id);
+        challenges[id] = false;
+      }
+      updateChallengesUI();
+    }
+    function updateChallengesUI() {
+      const list = document.getElementById('challenges-list');
+      const items = Array.from(list.querySelectorAll('.challenge'));
+      items.forEach(li => {
+        li.classList.toggle('completed', !!challenges[li.dataset.id]);
+      });
+      items.sort((a, b) => {
+        const doneA = a.classList.contains('completed');
+        const doneB = b.classList.contains('completed');
+        if (doneA === doneB) return 0;
+        return doneA ? 1 : -1;
+      });
+      list.innerHTML = '';
+      items.forEach(li => list.appendChild(li));
+      const doneCount = Object.values(challenges).filter(v => v).length;
+      document.getElementById('challenges-summary').textContent = `Challenges (${doneCount}/5)`;
+    }
+    // ---------------------------------------------------
 
-// Restart handlers
-document.getElementById('restart-phase').onclick = init;
-document.getElementById('restart-game').onclick = () => { phase = 1; init(); };
+    document.getElementById('reset-challenges').onclick = resetChallenges;
 
-// Powerups
-document.getElementById('powerups').addEventListener('click', e => {
-  if (e.target.id === 'cancel-powerup') {
-    selectedPower = null;
-    document.getElementById('chat-bar').textContent = '';
-    document.getElementById('cancel-powerup').style.display = 'none';
-    document.querySelectorAll('.cell.highlight').forEach(c => c.classList.remove('highlight'));
-    return;
-  }
-  if (e.target.dataset.action && current === 'player') {
-    const action = e.target.dataset.action;
-    if (action === 'convert' && powerUses.convert === 0) return;
-    selectedPower = action;
-    document.getElementById('chat-bar').textContent = `Selected: ${powerLabels[action]}`;
-    document.getElementById('cancel-powerup').style.display = 'inline-block';
-  }
-});
+    function updatePhaseDisplay() {
+      document.getElementById('phase-info').textContent = 'Phase: ' + phase;
+    }
+    function updatePowerupButtons() {
+      const container = document.getElementById('powerups');
+      let btn = container.querySelector('button[data-action="convert"]');
+      if (powerUses.convert > 0) {
+        if (!btn) {
+          btn = document.createElement('button');
+          btn.dataset.action = 'convert';
+          container.prepend(btn);
+        }
+        btn.textContent = `${powerLabels.convert} (${powerUses.convert})`;
+      } else if (btn) {
+        btn.remove();
+      }
+    }
 
-// Draw
-function handleDraw() {
-  current = null;
-  document.getElementById('turn-info').textContent = `Draw! Resetting Phase ${phase} in 5 seconds...`;
-  document.getElementById('board').classList.add('disabled');
-  setTimeout(init, 5000);
-}
+    function init() {
+      board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+      current = 'player'; selectedPower = null;
+      lastMoves = { player: null, ai: null, meteor: null };
+      powerUses = { convert: 1 };
+      powerUsedInPhase = {1: false, 2: false};
+      convertUsedInPhase2 = false;
 
-// Meteor animation
-function animateMeteor(cell, applyFn, callback, announce, duration = 0.8) {
-  const r = +cell.dataset.r, c = +cell.dataset.c;
-  document.getElementById('chat-bar').textContent = announce || `Meteor Strike on (${r+1},${c+1})`;
-  cell.style.animationDuration = `${duration}s`;
-  cell.classList.add('meteor-strike');
-  cell.addEventListener('animationend', function h() {
-    cell.removeEventListener('animationend', h);
-    cell.classList.remove('meteor-strike');
-    cell.style.animationDuration = '';
-    applyFn(r, c);
-    render(); renderHighlights();
-    if (callback) callback();
-  });
-}
+      document.getElementById('boss-message').style.display = 'none';
+      document.getElementById('chat-bar').textContent = '';
+      document.getElementById('cancel-powerup').style.display = 'none';
 
-// Hover
-function onCellHover(e) {
-  if (!selectedPower || current !== 'player') return;
-  const r = +e.target.dataset.r, c = +e.target.dataset.c;
-  const cells = selectedPower === 'reset-row'
-    ? document.querySelectorAll(`.cell[data-r='${r}']`)
-    : selectedPower === 'reset-col'
-      ? document.querySelectorAll(`.cell[data-c='${c}']`)
-      : [e.target];
-  cells.forEach(c => c.classList.add('highlight'));
-}
-function onCellOut() { document.querySelectorAll('.cell.highlight').forEach(c => c.classList.remove('highlight')); }
+      const boardEl = document.getElementById('board');
+      boardEl.innerHTML = '';
+      boardEl.classList.remove('disabled');
+      for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+          const cell = document.createElement('div');
+          cell.className = 'cell';
+          cell.dataset.r = r;
+          cell.dataset.c = c;
+          cell.addEventListener('click', onCellClick);
+          cell.addEventListener('mouseover', onCellHover);
+          cell.addEventListener('mouseout', onCellOut);
+          boardEl.appendChild(cell);
+        }
+      }
 
-// Click
-function onCellClick(e) {
-  if (current !== 'player') return;
-  const r = +e.target.dataset.r, c = +e.target.dataset.c;
-  if (board[r][c] !== 0 && !selectedPower) return;
-  if (selectedPower) {
-    const p = selectedPower;
-    document.getElementById('chat-bar').textContent = `Used: ${powerLabels[p]}`;
-    if (p === 'convert') { powerUses.convert = 0; updatePowerupButtons(); }
-    const cells = p === 'reset-row'
-      ? Array.from(document.querySelectorAll(`.cell[data-r='${r}']`))
-      : p === 'reset-col'
-        ? Array.from(document.querySelectorAll(`.cell[data-c='${c}']`))
-        : [e.target];
-    let i = 0;
-    function next() {
-      if (i >= cells.length) {
-        lastMoves.player = { r, c };
-        if (!handleWin(1)) { if (checkDraw()) handleDraw(); else nextTurn(); }
+      document.getElementById('turn-info').textContent = "Player's turn";
+      updatePhaseDisplay();
+      updatePowerupButtons();
+      render();
+      renderHighlights();
+
+      loadChallenges();
+      updateChallengesUI();
+    }
+
+    document.getElementById('restart-phase').onclick = init;
+    document.getElementById('restart-game').onclick = () => { phase = 1; init(); };
+
+    document.getElementById('powerups').addEventListener('click', e => {
+      if (e.target.id === 'cancel-powerup') {
+        selectedPower = null;
+        document.getElementById('chat-bar').textContent = '';
+        document.getElementById('cancel-powerup').style.display = 'none';
+        document.querySelectorAll('.cell.highlight').forEach(c => c.classList.remove('highlight'));
         return;
       }
-      const cell = cells[i++];
-      const rr = +cell.dataset.r, cc = +cell.dataset.c;
-      const speed = ['reset-row','reset-col'].includes(p)?0.2:0.8;
-      animateMeteor(cell, (r2,c2)=>{
-        if(p==='remove') board[r2][c2] = -1;
-        else if(p==='convert'&&board[r2][c2]===2) board[r2][c2]=1;
-        else if(['reset-row','reset-col'].includes(p)) board[r2][c2]=0;
-      }, next, `${powerLabels[p]} on (${rr+1},${cc+1})`, speed);
-    }
-    next();
-    selectedPower = null;
-    document.getElementById('cancel-powerup').style.display = 'none';
-  } else {
-    board[r][c] = 1;
-    lastMoves.player = { r, c };
-    render(); renderHighlights();
-    if (!handleWin(1)) { if (checkDraw()) handleDraw(); else nextTurn(); }
-  }
-}
-
-// Next turn
-function nextTurn() {
-  current = 'ai';
-  document.getElementById('turn-info').textContent = "AI's turn";
-  document.getElementById('board').classList.add('disabled'); aiTurn();
-}
-
-// Block candidate
-function findBlockCandidate() {
-  const dirs = [[1,0],[0,1],[1,1],[1,-1]];
-  const cand = [];
-  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
-    if (board[r][c] !== 0) continue;
-    dirs.forEach(([dR,dC]) => {
-      for (let k = -3; k <= 0; k++) {
-        const part = [];
-        for (let i = 0; i < WIN; i++) {
-          const nr = r + dR*(k+i), nc = c + dC*(k+i);
-          if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) { part.length=0; break; }
-          part.push(board[nr][nc]);
-        }
-        if (part.length && !part.includes(2)) cand.push({r,c,score:part.filter(v=>v===1).length});
+      if (e.target.dataset.action && current === 'player') {
+        const action = e.target.dataset.action;
+        if (action === 'convert' && powerUses.convert === 0) return;
+        selectedPower = action;
+        document.getElementById('chat-bar').textContent = `Selected: ${powerLabels[action]}`;
+        document.getElementById('cancel-powerup').style.display = 'inline-block';
       }
     });
-  }
-  if (!cand.length) return null;
-  cand.sort((a,b)=>b.score-a.score);
-  return {r:cand[0].r,c:cand[0].c};
-}
 
-// AI turn
-function aiTurn() {
-  document.getElementById('chat-bar').textContent = taunts[Math.floor(Math.random()*taunts.length)];
-  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (board[r][c] === 0) {
-    const sim = clone(board); sim[r][c] = 1;
-    if (checkWinLine(sim,1)) {
-      board[r][c] = 2; lastMoves.ai = {r,c}; render(); renderHighlights();
-      if (!handleWin(2)) { if (checkDraw()) handleDraw(); else scheduleEnv(); }
-      return;
-    }
-  }
-  setTimeout(() => {
-    const mv = monteCarloBestMove(); board[mv.r][mv.c] = 2;
-    lastMoves.ai = {r:mv.r,c:mv.c}; render(); renderHighlights();
-    if (!handleWin(2)) { if (checkDraw()) handleDraw(); else scheduleEnv(); }
-  }, 200);
-}
-
-// Environment strikes
-function scheduleEnv() {
-  setTimeout(() => {
-    const targets = [];
-    if (phase === 2) targets.push(findBlockCandidate() || randomEmpty());
-    else targets.push(randomEmpty());
-    if (!targets[0]) { handleDraw(); return; }
-    current = 'meteor'; document.getElementById('board').classList.add('disabled'); let i=0;
-    function next() {
-      if (i >= targets.length) { current='player'; document.getElementById('turn-info').textContent="Player's turn";document.getElementById('board').classList.remove('disabled'); return; }
-      const t = targets[i++]; const cell = document.querySelector(`.cell[data-r='${t.r}'][data-c='${t.c}']`);
-      animateMeteor(cell, (rr,cc) => { if (board[rr][cc] !== 2) board[rr][cc] = -1; lastMoves.meteor = {r:rr,c:cc}; }, next);
-    }
-    next();
-  }, 500);
-}
-
-// Utility functions
-function clone(a) { return a.map(r=>r.slice()); }
-function randomEmpty() { const arr=[]; for (let r=0;r<SIZE;r++) for (let c=0;c<SIZE;c++) if (board[r][c]===0) arr.push({r,c}); return arr.length?arr[Math.floor(Math.random()*arr.length)]:null; }
-function randomEmptyExcluding(ex) { const arr=[]; for (let r=0;r<SIZE;r++) for (let c=0;c<SIZE;c++) if (board[r][c]===0 && !(r===ex.r&&c===ex.c)) arr.push({r,c}); return arr.length?arr[Math.floor(Math.random()*arr.length)]:null; }
-function getAllMoves(p,b=board) { const m=[]; for(let r=0;r<SIZE;r++) for(let c=0;c<SIZE;c++) if(b[r][c]===0) m.push({r,c}); return m; }
-function evaluate(b) { let s=0, lines=[];
-  for (let r=0;r<SIZE;r++) for(let c=0;c<=SIZE-WIN;c++) lines.push(b[r].slice(c,c+WIN));
-  for (let c=0;c<SIZE;c++) for(let r=0;r<=SIZE-WIN;r++) lines.push([0,1,2,3].map(i=>b[r+i][c]));
-  for (let r=0;r<=SIZE-WIN;r++) for(let c=0;c<=SIZE-WIN;c++) lines.push([0,1,2,3].map(i=>b[r+i][c+i]));
-  for (let r=WIN-1;r<SIZE;r++) for(let c=0;c<=SIZE-WIN;c++) lines.push([0,1,2,3].map(i=>b[r-i][c+i]));
-  lines.forEach(L=>{ if(L.includes(-1)) return; const p1=L.filter(v=>v===1).length, p2=L.filter(v=>v===2).length; if(p1&&p2) return; const k=p1>0?p1:p2; let w=k===1?1:k===2?10:k===3?100:k===4?10000:0; s += (p2>0? w: -w); });
-  return s;
-}
-function monteCarloBestMove() { const start=Date.now(), stats=getAllMoves(2).map(m=>({m,score:0,visits:0})); while(Date.now()-start<900) { const sim=stats[Math.floor(Math.random()*stats.length)], b1=clone(board); b1[sim.m.r][sim.m.c]=2; const empt=getAllMoves(0,b1); if(empt.length){ const e=empt[Math.floor(Math.random()*empt.length)]; b1[e.r][e.c]=-1; } const pm=getAllMoves(1,b1); if(pm.length){ const p=pm[Math.floor(Math.random()*pm.length)]; b1[p.r][p.c]=1; } const am=getAllMoves(2,b1); if(am.length){ const a=am[Math.floor(Math.random()*am.length)]; b1[a.r][a.c]=2; } sim.score+=evaluate(b1); sim.visits++; } return stats.filter(s=>s.visits>0).sort((a,b)=>(b.score/b.visits)-(a.score/a.visits))[0].m; }
-function findWin(b,p) { const dirs=[[1,0],[0,1],[1,1],[1,-1]]; for(let r=0;r<SIZE;r++) for(let c=0;c<SIZE;c++){ if(b[r][c]!==p) continue; for(const [dR,dC] of dirs){ const coords=[]; for(let k=0;k<WIN;k++){ const nr=r+dR*k, nc=c+dC*k; if(nr<0||nr>=SIZE||nc<0||nc>=SIZE||b[nr][nc]!==p){coords.length=0;break;} coords.push({r:nr,c:nc}); } if(coords.length===WIN) return coords; }} return null; }
-function highlightWin(cells) { cells.forEach(({r,c})=>document.querySelector(`.cell[data-r='${r}'][data-c='${c}']`).classList.add('win')); }
-function checkWinLine(b,p) { return !!findWin(b,p); }
-function handleWin(player) {
-  const line = findWin(board, player);
-  if (!line) return false;
-  highlightWin(line);
-  if (player === 1) {
-    if (phase < 2) {
-      document.getElementById('turn-info').textContent = `Player wins Phase ${phase}!`;
-      const bossEl = document.getElementById('boss-message');
-      bossEl.style.display = 'block';
+    function handleDraw() {
+      if (phase === 2 && !powerUsedInPhase[2] && !challenges[5]) {
+        saveChallenge(5);
+      }
+      current = null;
+      document.getElementById('board').classList.add('disabled');
       let countdown = 5;
+      const turnInfo = document.getElementById('turn-info');
+      turnInfo.textContent = `Draw! Resetting Phase ${phase} in ${countdown} seconds...`;
       const timer = setInterval(() => {
-        bossEl.textContent = `Entering Phase ${phase+1} in ${countdown} second${countdown === 1 ? '' : 's'}...`;
-        if (countdown === 0) {
+        countdown--;
+        if (countdown > 0) {
+          turnInfo.textContent = `Draw! Resetting Phase ${phase} in ${countdown} seconds...`;
+        } else {
           clearInterval(timer);
-          phase++;
           init();
         }
-        countdown--;
       }, 1000);
-      document.getElementById('board').classList.add('disabled');
-    } else {
-      document.getElementById('boss-message').textContent = "You win! Boss Fight completed!";
-      document.getElementById('boss-message').style.display = 'block';
-      endGame('Player');
     }
-  } else {
-    endGame('AI');
-  }
-  return true;
-}
-function checkDraw() { return board.flat().every(v => v !== 0); }
-function endGame(w) { document.getElementById('turn-info').textContent = `${w} wins!`; document.getElementById('board').classList.add('disabled'); }
-function render() { document.querySelectorAll('.cell').forEach(cell => { const r = +cell.dataset.r, c = +cell.dataset.c, v = board[r][c]; cell.textContent = ''; cell.className = 'cell'; if (v === 1) { cell.textContent = 'X'; cell.classList.add('x-piece'); } else if (v === 2) { cell.textContent = 'O'; cell.classList.add('o-piece'); } if (v === -1) cell.classList.add('removed'); }); }
-function renderHighlights() { ['player','ai','meteor'].forEach(t => { const mv = lastMoves[t]; if (!mv) return; document.querySelector(`.cell[data-r='${mv.r}'][data-c='${mv.c}']`).classList.add(`last-${t}`); }); }
 
-// Start game
-init();
+    function animateMeteor(cell, applyFn, callback, announce, duration = 0.8) {
+      const r = +cell.dataset.r, c = +cell.dataset.c;
+      document.getElementById('chat-bar').textContent = announce || `Meteor Strike on (${r+1},${c+1})`;
+      cell.style.animationDuration = `${duration}s`;
+      cell.classList.add('meteor-strike');
+      cell.addEventListener('animationend', function h() {
+        cell.removeEventListener('animationend', h);
+        cell.classList.remove('meteor-strike');
+        cell.style.animationDuration = '';
+        applyFn(r, c);
+        render(); renderHighlights();
+        if (callback) callback();
+      });
+    }
+
+    function onCellHover(e) {
+      if (!selectedPower || current !== 'player') return;
+      const r = +e.target.dataset.r, c = +e.target.dataset.c;
+      let cells = [e.target];
+      if (selectedPower === 'reset-row') cells = document.querySelectorAll(`.cell[data-r='${r}']`);
+      if (selectedPower === 'reset-col') cells = document.querySelectorAll(`.cell[data-c='${c}']`);
+      cells.forEach(cel => cel.classList.add('highlight'));
+    }
+    function onCellOut() {
+      document.querySelectorAll('.cell.highlight').forEach(c => c.classList.remove('highlight'));
+    }
+
+    function onCellClick(e) {
+      if (current !== 'player') return;
+      const r = +e.target.dataset.r, c = +e.target.dataset.c;
+      if (board[r][c] !== 0 && !selectedPower) return;
+
+      if (selectedPower) {
+        powerUsedInPhase[phase] = true;
+        if (selectedPower === 'convert' && phase === 2) convertUsedInPhase2 = true;
+
+        const p = selectedPower;
+        document.getElementById('chat-bar').textContent = `Used: ${powerLabels[p]}`;
+        if (p === 'convert') {
+          powerUses.convert = 0;
+          updatePowerupButtons();
+        }
+        let cells = [e.target];
+        if (p === 'reset-row') cells = Array.from(document.querySelectorAll(`.cell[data-r='${r}']`));
+        if (p === 'reset-col') cells = Array.from(document.querySelectorAll(`.cell[data-c='${c}']`));
+
+        let i = 0;
+        function next() {
+          if (i >= cells.length) {
+            lastMoves.player = { r, c };
+            if (!handleWin(1)) {
+              if (checkDraw()) handleDraw();
+              else nextTurn();
+            }
+            return;
+          }
+          const cell = cells[i++];
+          const rr = +cell.dataset.r, cc = +cell.dataset.c;
+          const speed = (p === 'reset-row' || p === 'reset-col') ? 0.2 : 0.8;
+          animateMeteor(cell, (r2,c2) => {
+            if (p === 'remove') board[r2][c2] = -1;
+            else if (p === 'convert' && board[r2][c2] === 2) board[r2][c2] = 1;
+            else if (p === 'reset-row' || p === 'reset-col') board[r2][c2] = 0;
+          }, next, `${powerLabels[p]} on (${rr+1},${cc+1})`, speed);
+        }
+        next();
+        selectedPower = null;
+        document.getElementById('cancel-powerup').style.display = 'none';
+      } else {
+        board[r][c] = 1;
+        lastMoves.player = { r, c };
+        render(); renderHighlights();
+        if (!handleWin(1)) {
+          if (checkDraw()) handleDraw();
+          else nextTurn();
+        }
+      }
+    }
+
+    function nextTurn() {
+      current = 'ai';
+      document.getElementById('turn-info').textContent = "AI's turn";
+      document.getElementById('board').classList.add('disabled');
+      aiTurn();
+    }
+
+    function findBlockCandidate() {
+      const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+      const cand = [];
+      for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+          if (board[r][c] !== 0) continue;
+          dirs.forEach(([dR,dC]) => {
+            for (let k = -3; k <= 0; k++) {
+              const part = [];
+              for (let i = 0; i < WIN; i++) {
+                const nr = r + dR*(k+i), nc = c + dC*(k+i);
+                if (nr<0||nr>=SIZE||nc<0||nc>=SIZE) { part.length=0; break; }
+                part.push(board[nr][nc]);
+              }
+              if (part.length && !part.includes(2)) {
+                cand.push({ r, c, score: part.filter(v=>v===1).length });
+              }
+            }
+          });
+        }
+      }
+      if (!cand.length) return null;
+      cand.sort((a,b)=>b.score - a.score);
+      return { r: cand[0].r, c: cand[0].c };
+    }
+
+    function aiTurn() {
+      document.getElementById('chat-bar').textContent = taunts[Math.floor(Math.random()*taunts.length)];
+      // Try to win
+      for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+          if (board[r][c] === 0) {
+            const sim = clone(board);
+            sim[r][c] = 2;
+            if (checkWinLine(sim, 2)) {
+              board[r][c] = 2;
+              lastMoves.ai = { r, c };
+              render(); renderHighlights();
+              if (!handleWin(2)) {
+                if (checkDraw()) handleDraw();
+                else scheduleEnv();
+              }
+              return;
+            }
+          }
+        }
+      }
+      // Monte Carlo fallback
+      setTimeout(() => {
+        const mv = monteCarloBestMove();
+        board[mv.r][mv.c] = 2;
+        lastMoves.ai = { r: mv.r, c: mv.c };
+        render(); renderHighlights();
+        if (!handleWin(2)) {
+          if (checkDraw()) handleDraw();
+          else scheduleEnv();
+        }
+      }, 200);
+    }
+
+    function scheduleEnv() {
+      setTimeout(() => {
+        const targets = [];
+        if (phase === 2) targets.push(findBlockCandidate() || randomEmpty());
+        else targets.push(randomEmpty());
+        if (!targets[0]) { handleDraw(); return; }
+        current = 'meteor';
+        document.getElementById('board').classList.add('disabled');
+        let i = 0;
+        function next() {
+          if (i >= targets.length) {
+            current = 'player';
+            document.getElementById('turn-info').textContent = "Player's turn";
+            document.getElementById('board').classList.remove('disabled');
+            return;
+          }
+          const t = targets[i++];
+          const cell = document.querySelector(`.cell[data-r='${t.r}'][data-c='${t.c}']`);
+          animateMeteor(cell, (rr,cc) => {
+            if (board[rr][cc] !== 2) board[rr][cc] = -1;
+            lastMoves.meteor = { r: rr, c: cc };
+          }, next);
+        }
+        next();
+      }, 500);
+    }
+
+    function clone(a) { return a.map(r => r.slice()); }
+    function randomEmpty() {
+      const arr = [];
+      for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+          if (board[r][c] === 0) arr.push({r,c});
+        }
+      }
+      return arr.length ? arr[Math.floor(Math.random()*arr.length)] : null;
+    }
+    function getAllMoves(p, b = board) {
+      const m = [];
+      for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+          if (b[r][c] === 0) m.push({r,c});
+        }
+      } return m;
+    }
+
+    function evaluate(b) {
+      let s = 0, lines = [];
+      for (let r = 0; r < SIZE; r++) for (let c = 0; c <= SIZE-WIN; c++)
+        lines.push(b[r].slice(c,c+WIN));
+      for (let c = 0; c < SIZE; c++) for (let r = 0; r <= SIZE-WIN; r++)
+        lines.push([0,1,2,3].map(i=>b[r+i][c]));
+      for (let r = 0; r <= SIZE-WIN; r++) for (let c = 0; c <= SIZE-WIN; c++)
+        lines.push([0,1,2,3].map(i=>b[r+i][c+i]));
+      for (let r = WIN-1; r < SIZE; r++) for (let c = 0; c <= SIZE-WIN; c++)
+        lines.push([0,1,2,3].map(i=>b[r-i][c+i]));
+      lines.forEach(L => {
+        if (L.includes(-1)) return;
+        const p1 = L.filter(v=>v===1).length, p2 = L.filter(v=>v===2).length;
+        if (p1 && p2) return;
+        const k = p1>0? p1 : p2;
+        const w = k===1?1:k===2?10:k===3?100:k===4?10000:0;
+        s += (p2>0? w : -w);
+      });
+      return s;
+    }
+
+    function monteCarloBestMove() {
+      const start = Date.now();
+      const stats = getAllMoves(2).map(m=>({m,score:0,visits:0}));
+      while (Date.now() - start < 900) {
+        const sim = stats[Math.floor(Math.random()*stats.length)];
+        const b1 = clone(board);
+        b1[sim.m.r][sim.m.c] = 2;
+        const empt = getAllMoves(0,b1);
+        if (empt.length) { const e=empt[Math.floor(Math.random()*empt.length)]; b1[e.r][e.c] = -1; }
+        const pm = getAllMoves(1,b1);
+        if (pm.length) { const p=pm[Math.floor(Math.random()*pm.length)]; b1[p.r][p.c] = 1; }
+        const am = getAllMoves(2,b1);
+        if (am.length) { const a=am[Math.floor(Math.random()*am.length)]; b1[a.r][a.c] = 2; }
+        sim.score += evaluate(b1);
+        sim.visits++;
+      }
+      return stats.filter(s=>s.visits>0).sort((a,b)=> (b.score/b.visits) - (a.score/a.visits))[0].m;
+    }
+
+    function findWin(b,p) {
+      const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+      for (let r=0; r<SIZE; r++) {
+        for (let c=0; c<SIZE; c++) {
+          if (b[r][c] !== p) continue;
+          for (const [dR,dC] of dirs) {
+            const coords = [];
+            for (let k=0; k<WIN; k++) {
+              const nr=r+dR*k, nc=c+dC*k;
+              if (nr<0||nr>=SIZE||nc<0||nc>=SIZE||b[nr][nc]!==p) { coords.length=0; break; }
+              coords.push({r:nr,c:nc});
+            }
+            if (coords.length===WIN) return coords;
+          }
+        }
+      }
+      return null;
+    }
+
+    function highlightWin(cells) {
+      cells.forEach(({r,c})=>document.querySelector(`.cell[data-r='${r}'][data-c='${c}']`).classList.add('win'));
+    }
+
+    function checkWinLine(b,p){ return !!findWin(b,p); }
+
+    function handleWin(player) {
+      const line = findWin(board, player);
+      if (!line) return false;
+      highlightWin(line);
+      if (player===1) {
+        if (phase<2) {
+          if (!challenges[1]) saveChallenge(1);
+          if (!powerUsedInPhase[1] && !challenges[3]) saveChallenge(3);
+          document.getElementById('turn-info').textContent = `Player wins Phase ${phase}!`;
+          const boss=document.getElementById('boss-message');
+          boss.style.display='block';
+          let cnt=5;
+          const ti=setInterval(()=>{
+            boss.textContent=`Entering Phase ${phase+1} in ${cnt} second${cnt===1?'':'s'}...`;
+            if(cnt===0){ clearInterval(ti); phase++; init(); }
+            cnt--;
+          },1000);
+          document.getElementById('board').classList.add('disabled');
+        } else {
+          if (!challenges[2]) saveChallenge(2);
+          if (!convertUsedInPhase2 && !challenges[4]) saveChallenge(4);
+          document.getElementById('boss-message').textContent="You win! Boss Fight completed!";
+          document.getElementById('boss-message').style.display='block';
+          endGame('Player');
+        }
+      } else {
+        endGame('AI');
+      }
+      return true;
+    }
+
+    function checkDraw(){ return board.flat().every(v=>v!==0); }
+
+    function endGame(w){
+      document.getElementById('turn-info').textContent=`${w} wins!`;
+      document.getElementById('board').classList.add('disabled');
+    }
+
+    function render(){
+      document.querySelectorAll('.cell').forEach(cell=>{
+        const r=+cell.dataset.r, c=+cell.dataset.c, v=board[r][c];
+        cell.textContent=''; cell.className='cell';
+        if(v===1){ cell.textContent='X'; cell.classList.add('x-piece'); }
+        else if(v===2){ cell.textContent='O'; cell.classList.add('o-piece'); }
+        if(v===-1) cell.classList.add('removed');
+      });
+    }
+
+    function renderHighlights(){
+      ['player','ai','meteor'].forEach(type=>{
+        const mv=lastMoves[type];
+        if(!mv) return;
+        document.querySelector(`.cell[data-r='${mv.r}'][data-c='${mv.c}']`)
+                .classList.add(`last-${type}`);
+      });
+    }
+
+    // start
+    init();
   </script>
 </body>
 </html>
